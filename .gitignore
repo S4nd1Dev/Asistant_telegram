@@ -1,0 +1,18 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Konfigurasi & Rahasia (JANGAN PERNAH DI-UPLOAD)
+.env
+credentials.json
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# File OS (Opsional)
+.DS_Store
+Thumbs.db
