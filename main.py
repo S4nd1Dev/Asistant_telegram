@@ -7,6 +7,7 @@ from google import genai
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from keep_alive import keep_alive
 
 # ==========================================
 # 1. SETUP & ENVIRONMENT VARIABLES
@@ -339,4 +340,8 @@ def proses_waktu_manual(message, bot_msg_id):
         bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal memproses waktu manual: {str(e)}")
 
 print("Mini JARVIS v2.8 (Interactive Dashboard) Aktif.")
+bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
+
+print("Mini JARVIS v2.8 (Interactive Dashboard) Aktif.")
+keep_alive() # <-- Trik server tipuan dinyalakan di sini
 bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
