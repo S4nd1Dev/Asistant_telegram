@@ -339,11 +339,24 @@ def proses_waktu_manual(message, bot_msg_id):
         bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal memproses waktu manual: {str(e)}")
 
 # ==========================================
-# EKSEKUSI UTAMA (ANTI-ERROR DEPLOYMENT)
+# EKSEKUSI UTAMA (RENDER BULLETPROOF MODE)
 # ==========================================
+import threading
+from keep_alive import app
+
 print("Mini JARVIS v2.8 (Interactive Dashboard) Aktif.", flush=True)
 
-from keep_alive import keep_alive
-keep_alive() 
+# 1. Nyalakan Telegram Bot di Background Thread
+def jalankan_bot():
+    print("🤖 Memulai proses bot Telegram di latar belakang...", flush=True)
+    bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
 
-bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
+bot_thread = threading.Thread(target=jalankan_bot)
+bot_thread.daemon = True
+bot_thread.start()
+
+# 2. Nyalakan Web Server di Main Thread agar Render mendeteksinya
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌍 Membuka Web Service di Port {port} (Main Thread)...", flush=True)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
