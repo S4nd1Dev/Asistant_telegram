@@ -345,3 +345,4 @@ bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
 print("Mini JARVIS v2.8 (Interactive Dashboard) Aktif.")
 keep_alive() # <-- Trik server tipuan dinyalakan di sini
 bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
+
