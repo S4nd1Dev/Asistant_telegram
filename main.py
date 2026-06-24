@@ -163,7 +163,7 @@ def proses_tanya_jarvis(message):
             f"Pertanyaan User: {message.text}"
         )
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt_system
         )
         bot.reply_to(message, response.text, parse_mode="Markdown")
