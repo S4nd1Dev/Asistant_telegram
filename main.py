@@ -163,7 +163,7 @@ def proses_tanya_jarvis(message):
             f"Pertanyaan User: {message.text}"
         )
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt_system
         )
         bot.reply_to(message, response.text, parse_mode="Markdown")
@@ -411,4 +411,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌍 Membuka Web Service di Port {port} (Main Thread)...", flush=True)
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)     
