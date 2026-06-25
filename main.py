@@ -24,7 +24,7 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # ==========================================
 # 2. SETUP GOOGLE CALENDAR
 # ==========================================
-SCOPES = ['[https://www.googleapis.com/auth/calendar](https://www.googleapis.com/auth/calendar)']
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 creds_env = os.getenv("GOOGLE_CREDENTIALS")
 
 if creds_env:
@@ -38,6 +38,7 @@ calendar_service = build('calendar', 'v3', credentials=creds)
 pending_events = {}
 wizard_data = {}
 temp_delete_events = {}
+chat_histories = {} # BARU: Menyimpan memori histori obrolan berdasarkan chat_id
 
 # ==========================================
 # 3. FUNGSI MENU PERMANEN (REPLY KEYBOARD)
@@ -155,21 +156,31 @@ def proses_tanya_jarvis(message):
     
     bot.send_chat_action(chat_id, 'typing')
     try:
-        completion = groq_client.chat.completions.create(
-            messages=[
+        # BARU: Inisialisasi memori obrolan jika user baru pertama kali chat
+        if chat_id not in chat_histories:
+            chat_histories[chat_id] = [
                 {
                     "role": "system",
                     "content": "Konteks: Kamu adalah Mini JARVIS, AI Assistant untuk seorang AI Engineer MBKM & Mahasiswa Informatika. Jawablah dengan ringkas, teknis, dan *straight to the point*."
-                },
-                {
-                    "role": "user",
-                    "content": message.text
                 }
-            ],
+            ]
+            
+        # BARU: Masukkan pesan baru dari user ke dalam ingatan histori
+        chat_histories[chat_id].append({"role": "user", "content": message.text})
+        
+        # BARU: Batasi histori agar tidak terlalu panjang (Maks 10 obrolan terakhir agar hemat token)
+        if len(chat_histories[chat_id]) > 11:
+            chat_histories[chat_id] = [chat_histories[chat_id][0]] + chat_histories[chat_id][-10:]
+            
+        completion = groq_client.chat.completions.create(
+            messages=chat_histories[chat_id], # Kirimkan seluruh rangkaian ingatan
             model="llama-3.3-70b-versatile",
             temperature=0.7,
         )
         balasan_ai = completion.choices[0].message.content
+        
+        # BARU: Simpan balasan AI ke dalam ingatan agar obrolan selanjutnya menyambung
+        chat_histories[chat_id].append({"role": "assistant", "content": balasan_ai})
         
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
@@ -335,7 +346,6 @@ def handle_callback(call):
                 response_format={"type": "json_object"}
             )
             raw_content = completion.choices[0].message.content.strip()
-            # Trik aman menghindari error copy-paste block markdown
             simbol_kode = "`" * 3
             raw_json = raw_content.replace(simbol_kode + "json", "").replace(simbol_kode, "").strip()
             ai_data = json.loads(raw_json)
@@ -385,13 +395,14 @@ def handle_callback(call):
             event_data = pending_events.pop(chat_id) 
             bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengamankan slot waktu & memproses berkas bantuan...*")
             
-            event_link = create_calendar_event(event_data)
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✅ **Slot waktu diamankan!** 🔗 [Link Kalender]({event_link})\n\n🤖 *JARVIS sedang menulis dokumen yang kamu butuhkan...*", parse_mode="Markdown")
-            
-            prompt_rahasia = event_data.get('prompt_bantuan', '').strip()
-            
-            if prompt_rahasia:
-                try:
+            # PERBAIKAN: Mengurung seluruh proses eksekusi bantuan di dalam try-except agar tidak STUCK
+            try:
+                event_link = create_calendar_event(event_data)
+                bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✅ **Slot waktu diamankan!** 🔗 [Link Kalender]({event_link})\n\n🤖 *JARVIS sedang menulis dokumen yang kamu butuhkan...*", parse_mode="Markdown")
+                
+                prompt_rahasia = event_data.get('prompt_bantuan', '').strip()
+                
+                if prompt_rahasia:
                     completion = groq_client.chat.completions.create(
                         messages=[
                             {"role": "system", "content": "Kamu adalah JARVIS, asisten AI spesialis teknis."},
@@ -401,12 +412,12 @@ def handle_callback(call):
                         temperature=0.7
                     )
                     hasil_bantuan = completion.choices[0].message.content
-                except Exception as e:
-                    hasil_bantuan = f"Gagal mengeksekusi AI: {str(e)}"
-            else:
-                hasil_bantuan = "Skenario dieksekusi, namun tidak ada instruksi tambahan dari sistem."
+                else:
+                    hasil_bantuan = "Skenario dieksekusi, namun tidak ada instruksi tambahan dari sistem."
 
-            bot.send_message(chat_id, f"💡 **Hasil Eksekusi Otomatis:**\n\n{hasil_bantuan}", reply_markup=markup_kembali, parse_mode="Markdown")
+                bot.send_message(chat_id, f"💡 **Hasil Eksekusi Otomatis:**\n\n{hasil_bantuan}", reply_markup=markup_kembali, parse_mode="Markdown")
+            except Exception as error_skenario:
+                bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Skenario gagal dijalankan: {str(error_skenario)}", reply_markup=markup_kembali)
         else:
             bot.answer_callback_query(call.id, "⚠️ Sesi kedaluwarsa.")
 
@@ -458,7 +469,6 @@ def proses_waktu_manual(message, bot_msg_id):
             response_format={"type": "json_object"}
         )
         raw_content = completion.choices[0].message.content.strip()
-        # Trik aman menghindari error copy-paste block markdown
         simbol_kode = "`" * 3
         raw_json = raw_content.replace(simbol_kode + "json", "").replace(simbol_kode, "").strip()
         ai_data = json.loads(raw_json)
@@ -484,7 +494,6 @@ def proses_waktu_manual(message, bot_msg_id):
 # ==========================================
 print("Mini JARVIS v3.0 (The App Dashboard) Aktif.", flush=True)
 
-# 1. Nyalakan Telegram Bot di Background Thread
 def jalankan_bot():
     print("🤖 Memulai proses bot Telegram di latar belakang...", flush=True)
     bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
@@ -493,7 +502,6 @@ bot_thread = threading.Thread(target=jalankan_bot)
 bot_thread.daemon = True
 bot_thread.start()
 
-# 2. Nyalakan Web Server di Main Thread agar Render mendeteksinya
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌍 Membuka Web Service di Port {port} (Main Thread)...", flush=True)
