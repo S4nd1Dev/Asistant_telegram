@@ -259,11 +259,10 @@ def handle_callback(call):
     if data == "jadwalkan_diskusi":
         bot.answer_callback_query(call.id)
         
-        # Ekstrak pesan AI sebelumnya untuk dijadikan konteks pintar
         teks_diskusi = call.message.text
         wizard_data[chat_id] = {
             'nama_acara': "Eksekusi Agenda Diskusi",
-            'konteks_diskusi': teks_diskusi, # Data ini akan dibaca oleh Groq nanti
+            'konteks_diskusi': teks_diskusi,
             'bot_msg_id': bot_msg_id
         }
         
@@ -335,7 +334,8 @@ def handle_callback(call):
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )
-            raw_json = completion.choices[0].message.content.strip().replace("
+            raw_content = completion.choices[0].message.content.strip()
+            raw_json = raw_content.replace("
 ```json", "").replace("```", "").strip()
             ai_data = json.loads(raw_json)
             
@@ -456,7 +456,8 @@ def proses_waktu_manual(message, bot_msg_id):
             temperature=0.2,
             response_format={"type": "json_object"}
         )
-        raw_json = completion.choices[0].message.content.strip().replace("
+        raw_content = completion.choices[0].message.content.strip()
+        raw_json = raw_content.replace("
 ```json", "").replace("```", "").strip()
         ai_data = json.loads(raw_json)
         
