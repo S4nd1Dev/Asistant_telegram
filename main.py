@@ -177,7 +177,12 @@ def proses_tanya_jarvis(message):
             InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu")
         )
         
-        bot.reply_to(message, balasan_ai, reply_markup=markup, parse_mode="Markdown")
+        # --- PERBAIKAN: Sistem Jaring Pengaman Markdown ---
+        try:
+            bot.reply_to(message, balasan_ai, reply_markup=markup, parse_mode="Markdown")
+        except telebot.apihelper.ApiTelegramException:
+            bot.reply_to(message, balasan_ai, reply_markup=markup)
+            
     except Exception as e:
         bot.reply_to(message, f"❌ Gagal memproses AI: {e}")
 
