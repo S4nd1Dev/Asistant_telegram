@@ -177,7 +177,6 @@ def proses_tanya_jarvis(message):
             InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu")
         )
         
-        # --- PERBAIKAN: Sistem Jaring Pengaman Markdown ---
         try:
             bot.reply_to(message, balasan_ai, reply_markup=markup, parse_mode="Markdown")
         except telebot.apihelper.ApiTelegramException:
@@ -236,15 +235,11 @@ def proses_judul(message, bot_msg_id):
         InlineKeyboardButton("✍️ Saya Mau Ketik Waktu Sendiri", callback_data="mode_manual")
     )
     
-    # Jika dipanggil tanpa merujuk bot_msg_id (seperti dari tombol jadwalkan hasil diskusi)
-    if bot_msg_id == message.message_id: 
-        bot.send_message(chat_id, f"📌 **Aktivitas:** {message.text}\n\nBagaimana kamu ingin menentukan alokasi waktu untuk jadwal ini?", reply_markup=markup, parse_mode="Markdown")
-    else:
-        bot.edit_message_text(
-            chat_id=chat_id, message_id=bot_msg_id,
-            text=f"📌 **Aktivitas:** {message.text}\n\nBagaimana kamu ingin menentukan alokasi waktu untuk jadwal ini?",
-            reply_markup=markup, parse_mode="Markdown"
-        )
+    bot.edit_message_text(
+        chat_id=chat_id, message_id=bot_msg_id,
+        text=f"📌 **Aktivitas:** {message.text}\n\nBagaimana kamu ingin menentukan alokasi waktu untuk jadwal ini?",
+        reply_markup=markup, parse_mode="Markdown"
+    )
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
@@ -260,15 +255,30 @@ def handle_callback(call):
         send_welcome(call.message) 
         return
 
-    # --- HANDLER TRANSISI DISKUSI KE KALENDER ---
+    # --- HANDLER TRANSISI DISKUSI KE KALENDER (DIUBAH TOTAL) ---
     if data == "jadwalkan_diskusi":
         bot.answer_callback_query(call.id)
-        msg = bot.send_message(
-            chat_id, 
-            "🤖 **Transisi Kalender Aktif.**\n\nKetik **ide/judul aktivitas** berdasarkan diskusi kita tadi untuk diolah menjadi jadwal:", 
-            parse_mode="Markdown"
+        
+        # Ekstrak pesan AI sebelumnya untuk dijadikan konteks pintar
+        teks_diskusi = call.message.text
+        wizard_data[chat_id] = {
+            'nama_acara': "Eksekusi Agenda Diskusi",
+            'konteks_diskusi': teks_diskusi, # Data ini akan dibaca oleh Groq nanti
+            'bot_msg_id': bot_msg_id
+        }
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🤖 Biarkan JARVIS Ekstrak & Atur Waktu", callback_data="mode_auto"),
+            InlineKeyboardButton("✍️ Saya Ingin Tentukan Waktu Sendiri", callback_data="mode_manual"),
+            InlineKeyboardButton("🏠 Batal & Kembali", callback_data="kembali_menu")
         )
-        bot.register_next_step_handler(msg, lambda m: proses_judul(m, msg.message_id))
+        
+        bot.edit_message_text(
+            chat_id=chat_id, message_id=bot_msg_id,
+            text="🗓️ **Sistem Penjadwalan Cepat Aktif**\n\n_JARVIS akan otomatis mengambil inti kegiatan dari hasil diskusi kita di atas._\n\nBagaimana kamu ingin menentukan waktu pelaksanaannya?",
+            reply_markup=markup, parse_mode="Markdown"
+        )
         return
 
     # --- HANDLER HAPUS JADWAL ---
@@ -293,6 +303,9 @@ def handle_callback(call):
         bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⚡ *[■■■■□□□□□□] JARVIS sedang menghitung ritme produktivitas optimal...*", parse_mode="Markdown")
         
         topik = wizard_data[chat_id]['nama_acara']
+        konteks = wizard_data[chat_id].get('konteks_diskusi', '')
+        info_tambahan = f"\nKonteks Aktivitas (Ekstrak judul spesifik dari diskusi ini): {konteks}" if konteks else ""
+        
         wib = timezone(timedelta(hours=7))
         waktu_sekarang_str = datetime.now(wib).strftime("%Y-%m-%d %H:%M:%S")
         
@@ -301,12 +314,12 @@ def handle_callback(call):
             Waktu saat ini: {waktu_sekarang_str} WIB.
             Konteks User: Mahasiswa Informatika ITERA, AI Engineer MBKM DBS Foundation. Proyek utama: SisaBisa (Two-Tower). Pacar: Hanifa. Rutinitas: Gym (PPL/Upper-Lower), Bug Hunting (Linux, Nuclei, Subfinder).
             
-            Tugas: Rekomendasikan waktu mulai dan selesai terbaik (bisa hari ini atau beberapa hari ke depan) untuk aktivitas berikut. Berikan ALASAN logis mengapa slot waktu tersebut dipilih.
-            Nama Acara: '{topik}'
+            Tugas: Rekomendasikan waktu mulai dan selesai terbaik untuk aktivitas berikut. Berikan ALASAN logis mengapa slot waktu tersebut dipilih.
+            Nama Acara Sementara: '{topik}' {info_tambahan}
             
             Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown ```json):
             {{
-                "nama_acara": "Judul acara yang dirapikan",
+                "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks Acara/Diskusi",
                 "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
                 "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
                 "alasan_waktu": "Berikan penjelasan taktis.",
@@ -322,7 +335,8 @@ def handle_callback(call):
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )
-            raw_json = completion.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
+            raw_json = completion.choices[0].message.content.strip().replace("
+```json", "").replace("```", "").strip()
             ai_data = json.loads(raw_json)
             
             event_data = {
@@ -404,7 +418,10 @@ def proses_waktu_manual(message, bot_msg_id):
     chat_id = message.chat.id
     if message.text.startswith('/'): return
     waktu_user = message.text
+    
     topik = wizard_data[chat_id]['nama_acara']
+    konteks = wizard_data[chat_id].get('konteks_diskusi', '')
+    info_tambahan = f"\nKonteks Aktivitas (Ekstrak judul spesifik dari diskusi ini): {konteks}" if konteks else ""
     
     try: bot.delete_message(chat_id, message.message_id)
     except: pass
@@ -418,12 +435,12 @@ def proses_waktu_manual(message, bot_msg_id):
         prompt_ai = f"""
         Waktu saat ini: {waktu_sekarang_str} WIB.
         Tugas: Ubah input waktu manual dari user menjadi format ISO kalender yang tepat.
-        Nama Acara: '{topik}'
+        Nama Acara Sementara: '{topik}' {info_tambahan}
         Input Waktu User: '{waktu_user}'
         
         Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown ```json):
         {{
-            "nama_acara": "Judul acara yang dirapikan",
+            "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks",
             "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
             "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
             "alasan_waktu": "",
@@ -439,7 +456,8 @@ def proses_waktu_manual(message, bot_msg_id):
             temperature=0.2,
             response_format={"type": "json_object"}
         )
-        raw_json = completion.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
+        raw_json = completion.choices[0].message.content.strip().replace("
+```json", "").replace("```", "").strip()
         ai_data = json.loads(raw_json)
         
         event_data = {
