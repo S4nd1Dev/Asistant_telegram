@@ -24,7 +24,7 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # ==========================================
 # 2. SETUP GOOGLE CALENDAR
 # ==========================================
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = ['[https://www.googleapis.com/auth/calendar](https://www.googleapis.com/auth/calendar)']
 creds_env = os.getenv("GOOGLE_CREDENTIALS")
 
 if creds_env:
@@ -255,7 +255,7 @@ def handle_callback(call):
         send_welcome(call.message) 
         return
 
-    # --- HANDLER TRANSISI DISKUSI KE KALENDER (DIUBAH TOTAL) ---
+    # --- HANDLER TRANSISI DISKUSI KE KALENDER ---
     if data == "jadwalkan_diskusi":
         bot.answer_callback_query(call.id)
         
@@ -316,7 +316,7 @@ def handle_callback(call):
             Tugas: Rekomendasikan waktu mulai dan selesai terbaik untuk aktivitas berikut. Berikan ALASAN logis mengapa slot waktu tersebut dipilih.
             Nama Acara Sementara: '{topik}' {info_tambahan}
             
-            Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown ```json):
+            Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown apapun):
             {{
                 "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks Acara/Diskusi",
                 "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
@@ -335,8 +335,9 @@ def handle_callback(call):
                 response_format={"type": "json_object"}
             )
             raw_content = completion.choices[0].message.content.strip()
-            raw_json = raw_content.replace("
-```json", "").replace("```", "").strip()
+            # Trik aman menghindari error copy-paste block markdown
+            simbol_kode = "`" * 3
+            raw_json = raw_content.replace(simbol_kode + "json", "").replace(simbol_kode, "").strip()
             ai_data = json.loads(raw_json)
             
             event_data = {
@@ -438,7 +439,7 @@ def proses_waktu_manual(message, bot_msg_id):
         Nama Acara Sementara: '{topik}' {info_tambahan}
         Input Waktu User: '{waktu_user}'
         
-        Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown ```json):
+        Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown apapun):
         {{
             "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks",
             "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
@@ -457,8 +458,9 @@ def proses_waktu_manual(message, bot_msg_id):
             response_format={"type": "json_object"}
         )
         raw_content = completion.choices[0].message.content.strip()
-        raw_json = raw_content.replace("
-```json", "").replace("```", "").strip()
+        # Trik aman menghindari error copy-paste block markdown
+        simbol_kode = "`" * 3
+        raw_json = raw_content.replace(simbol_kode + "json", "").replace(simbol_kode, "").strip()
         ai_data = json.loads(raw_json)
         
         event_data = {
