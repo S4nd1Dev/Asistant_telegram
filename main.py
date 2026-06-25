@@ -38,7 +38,7 @@ calendar_service = build('calendar', 'v3', credentials=creds)
 pending_events = {}
 wizard_data = {}
 temp_delete_events = {}
-chat_histories = {} # BARU: Menyimpan memori histori obrolan berdasarkan chat_id
+chat_histories = {} 
 
 # ==========================================
 # 3. FUNGSI MENU PERMANEN (REPLY KEYBOARD)
@@ -156,7 +156,6 @@ def proses_tanya_jarvis(message):
     
     bot.send_chat_action(chat_id, 'typing')
     try:
-        # BARU: Inisialisasi memori obrolan jika user baru pertama kali chat
         if chat_id not in chat_histories:
             chat_histories[chat_id] = [
                 {
@@ -165,21 +164,18 @@ def proses_tanya_jarvis(message):
                 }
             ]
             
-        # BARU: Masukkan pesan baru dari user ke dalam ingatan histori
         chat_histories[chat_id].append({"role": "user", "content": message.text})
         
-        # BARU: Batasi histori agar tidak terlalu panjang (Maks 10 obrolan terakhir agar hemat token)
         if len(chat_histories[chat_id]) > 11:
             chat_histories[chat_id] = [chat_histories[chat_id][0]] + chat_histories[chat_id][-10:]
             
         completion = groq_client.chat.completions.create(
-            messages=chat_histories[chat_id], # Kirimkan seluruh rangkaian ingatan
+            messages=chat_histories[chat_id], 
             model="llama-3.3-70b-versatile",
             temperature=0.7,
         )
         balasan_ai = completion.choices[0].message.content
         
-        # BARU: Simpan balasan AI ke dalam ingatan agar obrolan selanjutnya menyambung
         chat_histories[chat_id].append({"role": "assistant", "content": balasan_ai})
         
         markup = InlineKeyboardMarkup(row_width=1)
@@ -199,27 +195,27 @@ def proses_tanya_jarvis(message):
 # ==========================================
 # 6. LOGIKA BUAT JADWAL & CALLBACK
 # ==========================================
-def create_calendar_event(event_data):
+def create_calendar_event(jadwal):
     event = {
-        'summary': event_data.get('nama_acara', 'Jadwal Baru'),
-        'description': event_data.get('deskripsi', ''),
-        'start': {'dateTime': event_data['waktu_mulai'], 'timeZone': 'Asia/Jakarta'},
-        'end': {'dateTime': event_data['waktu_selesai'], 'timeZone': 'Asia/Jakarta'},
+        'summary': jadwal.get('nama_acara', 'Jadwal Baru'),
+        'description': jadwal.get('deskripsi', ''),
+        'start': {'dateTime': jadwal['waktu_mulai'], 'timeZone': 'Asia/Jakarta'},
+        'end': {'dateTime': jadwal['waktu_selesai'], 'timeZone': 'Asia/Jakarta'},
     }
     event_result = calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
     return event_result.get('htmlLink')
 
 def tampilkan_konfirmasi(chat_id, bot_msg_id, event_data):
-    waktu_format_baca = event_data['waktu_mulai'].replace('T', ' ')
-    pesan_konfirmasi = (
-        f"🧠 **JARVIS Intelligence Report**\n\n"
-        f"📌 **Acara:** {event_data['nama_acara']}\n"
-        f"🟢 **Waktu:** {waktu_format_baca} WIB\n"
-    )
+    pesan_konfirmasi = f"🧠 **JARVIS Intelligence Report**\n\n"
+    
+    # Menampilkan daftar jadwal yang sudah dipecah AI
+    for i, jadwal in enumerate(event_data.get('daftar_jadwal', [])):
+        waktu_mulai = jadwal['waktu_mulai'].replace('T', ' ')[:16]
+        waktu_selesai = jadwal['waktu_selesai'].split('T')[1][:5] if 'T' in jadwal['waktu_selesai'] else ""
+        pesan_konfirmasi += f"📌 **{i+1}. {jadwal['nama_acara']}**\n🟢 {waktu_mulai} - {waktu_selesai} WIB\n\n"
+        
     if event_data.get("alasan_waktu"):
-        pesan_konfirmasi += f"📋 **Analisis Alasan:** {event_data['alasan_waktu']}\n\n"
-    else:
-        pesan_konfirmasi += "\n"
+        pesan_konfirmasi += f"📋 **Analisis:** {event_data['alasan_waktu']}\n\n"
         
     markup = InlineKeyboardMarkup(row_width=1)
     if event_data.get("penawaran_bantuan"):
@@ -307,35 +303,67 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "⚠️ Sesi kedaluwarsa.")
         return
 
-    # --- MODE AUTO & MANUAL ---
+    # --- MODE AUTO (PINTAR CEK KALENDER & PECAH JADWAL) ---
     if data == "mode_auto":
         bot.answer_callback_query(call.id, "Menganalisis opsi waktu terbaik...")
-        bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⚡ *[■■■■□□□□□□] JARVIS sedang menghitung ritme produktivitas optimal...*", parse_mode="Markdown")
+        bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⚡ *[■■■■□□□□□□] JARVIS sedang membaca isi kalendermu dan menyusun ritme...*", parse_mode="Markdown")
         
         topik = wizard_data[chat_id]['nama_acara']
         konteks = wizard_data[chat_id].get('konteks_diskusi', '')
-        info_tambahan = f"\nKonteks Aktivitas (Ekstrak judul spesifik dari diskusi ini): {konteks}" if konteks else ""
+        info_tambahan = f"\nKonteks Aktivitas (Ekstrak poin penting menjadi beberapa jadwal dari teks ini): {konteks}" if konteks else ""
         
         wib = timezone(timedelta(hours=7))
-        waktu_sekarang_str = datetime.now(wib).strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now(wib)
+        besok_lusa = now + timedelta(days=2)
+        waktu_sekarang_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Mengintip jadwal yang sudah ada agar tidak bentrok
+        try:
+            events_result = calendar_service.events().list(
+                calendarId=CALENDAR_ID, timeMin=now.isoformat(), timeMax=besok_lusa.isoformat(),
+                singleEvents=True, orderBy='startTime'
+            ).execute()
+            existing_events = events_result.get('items', [])
+            jadwal_terisi = "JADWAL YANG SUDAH TERISI (Jangan tempatkan acara baru menabrak jam-jam ini):\n"
+            if existing_events:
+                for ev in existing_events:
+                    start_str = ev['start'].get('dateTime', ev['start'].get('date')).replace('T', ' ')[:16]
+                    end_str = ev['end'].get('dateTime', ev['end'].get('date'))[11:16] if 'T' in ev['end'].get('dateTime', '') else ''
+                    jadwal_terisi += f"- {start_str} - {end_str} WIB: {ev['summary']}\n"
+            else:
+                jadwal_terisi = "Kalender kosong. Bebas jadwalkan kapan saja."
+        except Exception:
+            jadwal_terisi = "Gagal mengambil data kalender."
         
         try:
             prompt_ai = f"""
             Waktu saat ini: {waktu_sekarang_str} WIB.
-            Konteks User: Mahasiswa Informatika ITERA, AI Engineer MBKM DBS Foundation. Proyek utama: SisaBisa (Two-Tower). Pacar: Hanifa. Rutinitas: Gym (PPL/Upper-Lower), Bug Hunting (Linux, Nuclei, Subfinder).
+            Konteks User: Mahasiswa Informatika, AI Engineer MBKM. Rutinitas: Gym, Bug Hunting.
             
-            Tugas: Rekomendasikan waktu mulai dan selesai terbaik untuk aktivitas berikut. Berikan ALASAN logis mengapa slot waktu tersebut dipilih.
-            Nama Acara Sementara: '{topik}' {info_tambahan}
+            {jadwal_terisi}
+            
+            Tugas: Buat jadwal untuk aktivitas berikut. JIKA aktivitasnya lebih dari satu (misal list dari hasil diskusi), PECAH menjadi beberapa jadwal terpisah yang BERURUTAN atau beda jam. PASTIKAN TIDAK BENTROK dengan jadwal yang sudah terisi di atas. Berikan waktu istirahat yang cukup.
+            Nama Acara / Referensi: '{topik}' {info_tambahan}
             
             Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown apapun):
             {{
-                "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks Acara/Diskusi",
-                "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
-                "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
-                "alasan_waktu": "Berikan penjelasan taktis.",
-                "deskripsi": "Catatan singkat untuk Google Calendar.",
-                "penawaran_bantuan": "Tawarkan 1 bantuan spesifik teknis/materi jika relevan. Maks 1 kalimat.",
-                "prompt_bantuan": "Instruksi rahasia buat dirimu sendiri jika user menerima bantuan. Kosongkan jika tidak ada."
+                "daftar_jadwal": [
+                    {{
+                        "nama_acara": "Judul Spesifik Aktivitas 1",
+                        "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
+                        "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
+                        "deskripsi": "Catatan singkat."
+                    }},
+                    {{
+                        "nama_acara": "Judul Spesifik Aktivitas 2 (Opsional jika banyak)",
+                        "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
+                        "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
+                        "deskripsi": "Catatan singkat."
+                    }}
+                ],
+                "alasan_waktu": "Jelaskan strategi pengaturan waktumu.",
+                "penawaran_bantuan": "Tawarkan 1 bantuan teknis spesifik.",
+                "prompt_bantuan": "Instruksi AI rahasia."
             }}
             """
             
@@ -351,10 +379,7 @@ def handle_callback(call):
             ai_data = json.loads(raw_json)
             
             event_data = {
-                "nama_acara": ai_data.get('nama_acara', topik),
-                "deskripsi": ai_data.get('deskripsi', ''),
-                "waktu_mulai": ai_data.get('waktu_mulai'),
-                "waktu_selesai": ai_data.get('waktu_selesai'),
+                "daftar_jadwal": ai_data.get('daftar_jadwal', []),
                 "alasan_waktu": ai_data.get('alasan_waktu'),
                 "penawaran_bantuan": ai_data.get('penawaran_bantuan', ''),
                 "prompt_bantuan": ai_data.get('prompt_bantuan', '')
@@ -374,16 +399,21 @@ def handle_callback(call):
         )
         bot.register_next_step_handler_by_chat_id(chat_id, lambda m: proses_waktu_manual(m, bot_msg_id))
 
-    # --- HANDLER EKSEKUSI KALENDER ---
+    # --- HANDLER EKSEKUSI KALENDER (INSERT ARRAY) ---
     elif data == "confirm_yes":
         markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
         if chat_id in pending_events:
             bot.answer_callback_query(call.id, "Menyimpan ke kalender...")
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengirim data ke Google Calendar API...*")
-            event_data = pending_events[chat_id]
-            event_link = create_calendar_event(event_data)
+            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengirim semua data ke Google Calendar API...*", parse_mode="Markdown")
             
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✨ **JARVIS Core:** Tugas berhasil dialokasikan ke Google Calendar.\n🔗 [Buka Kalender]({event_link})", reply_markup=markup_kembali, parse_mode="Markdown")
+            event_data = pending_events[chat_id]
+            links = []
+            for jadwal in event_data.get('daftar_jadwal', []):
+                link = create_calendar_event(jadwal)
+                links.append(f"[{jadwal['nama_acara']}]({link})")
+            
+            teks_link = "\n".join(f"🔗 {l}" for l in links)
+            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✨ **JARVIS Core:** Semua tugas berhasil dialokasikan!\n\n{teks_link}", reply_markup=markup_kembali, parse_mode="Markdown", disable_web_page_preview=True)
             del pending_events[chat_id]
         else:
             bot.answer_callback_query(call.id, "⚠️ Sesi kedaluwarsa.")
@@ -393,12 +423,16 @@ def handle_callback(call):
         if chat_id in pending_events:
             bot.answer_callback_query(call.id, "Memproses skenario bantuan...")
             event_data = pending_events.pop(chat_id) 
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengamankan slot waktu & memproses berkas bantuan...*")
+            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengamankan rentetan slot waktu & memproses berkas bantuan...*", parse_mode="Markdown")
             
-            # PERBAIKAN: Mengurung seluruh proses eksekusi bantuan di dalam try-except agar tidak STUCK
             try:
-                event_link = create_calendar_event(event_data)
-                bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✅ **Slot waktu diamankan!** 🔗 [Link Kalender]({event_link})\n\n🤖 *JARVIS sedang menulis dokumen yang kamu butuhkan...*", parse_mode="Markdown")
+                links = []
+                for jadwal in event_data.get('daftar_jadwal', []):
+                    link = create_calendar_event(jadwal)
+                    links.append(f"[{jadwal['nama_acara']}]({link})")
+                teks_link = "\n".join(f"🔗 {l}" for l in links)
+                
+                bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✅ **Slot waktu diamankan!**\n{teks_link}\n\n🤖 *JARVIS sedang menulis dokumen yang kamu butuhkan...*", parse_mode="Markdown", disable_web_page_preview=True)
                 
                 prompt_rahasia = event_data.get('prompt_bantuan', '').strip()
                 
@@ -452,11 +486,15 @@ def proses_waktu_manual(message, bot_msg_id):
         
         Keluarkan output DALAM FORMAT JSON MURNI (tanpa block markdown apapun):
         {{
-            "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks",
-            "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
-            "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
+            "daftar_jadwal": [
+                {{
+                    "nama_acara": "Buat Judul Spesifik Berdasarkan Konteks",
+                    "waktu_mulai": "YYYY-MM-DDTHH:MM:SS",
+                    "waktu_selesai": "YYYY-MM-DDTHH:MM:SS",
+                    "deskripsi": "Catatan singkat."
+                }}
+            ],
             "alasan_waktu": "",
-            "deskripsi": "Catatan singkat.",
             "penawaran_bantuan": "",
             "prompt_bantuan": ""
         }}
@@ -474,10 +512,7 @@ def proses_waktu_manual(message, bot_msg_id):
         ai_data = json.loads(raw_json)
         
         event_data = {
-            "nama_acara": ai_data.get('nama_acara', topik),
-            "deskripsi": ai_data.get('deskripsi', ''),
-            "waktu_mulai": ai_data.get('waktu_mulai'),
-            "waktu_selesai": ai_data.get('waktu_selesai'),
+            "daftar_jadwal": ai_data.get('daftar_jadwal', []),
             "alasan_waktu": None,
             "penawaran_bantuan": ai_data.get('penawaran_bantuan', ''),
             "prompt_bantuan": ai_data.get('prompt_bantuan', '')
