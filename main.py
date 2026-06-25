@@ -16,10 +16,10 @@ from keep_alive import app
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CALENDAR_ID = os.getenv("CALENDAR_ID")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY") # Memuat token Groq
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-groq_client = Groq(api_key=GROQ_API_KEY) # Inisialisasi Klien Groq
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ==========================================
 # 2. SETUP GOOGLE CALENDAR
@@ -37,7 +37,7 @@ calendar_service = build('calendar', 'v3', credentials=creds)
 
 pending_events = {}
 wizard_data = {}
-temp_delete_events = {} # Menyimpan ID event sementara untuk fitur hapus
+temp_delete_events = {}
 
 # ==========================================
 # 3. FUNGSI MENU PERMANEN (REPLY KEYBOARD)
@@ -125,7 +125,6 @@ def tampilkan_menu_hapus(chat_id):
     now = datetime.now(wib).isoformat()
     
     try:
-        # Mengambil 5 jadwal terdekat mulai dari sekarang
         events_result = calendar_service.events().list(
             calendarId=CALENDAR_ID, timeMin=now, maxResults=5,
             singleEvents=True, orderBy='startTime'
@@ -140,7 +139,6 @@ def tampilkan_menu_hapus(chat_id):
         markup = InlineKeyboardMarkup(row_width=1)
         
         for idx, event in enumerate(events):
-            # Memetakan ID event asli Google ke ID pendek untuk tombol Telegram
             temp_delete_events[chat_id][str(idx)] = event['id']
             waktu = event['start'].get('dateTime', event['start'].get('date'))
             jam_tgl = waktu.replace('T', ' ')[:16] if 'T' in waktu else waktu
@@ -171,12 +169,20 @@ def proses_tanya_jarvis(message):
             model="llama-3.3-70b-versatile",
             temperature=0.7,
         )
-        bot.reply_to(message, completion.choices[0].message.content, parse_mode="Markdown")
+        balasan_ai = completion.choices[0].message.content
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("🗓️ Jadwalkan Hasil Diskusi Ini", callback_data="jadwalkan_diskusi"),
+            InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu")
+        )
+        
+        bot.reply_to(message, balasan_ai, reply_markup=markup, parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Gagal memproses AI: {e}")
 
 # ==========================================
-# 6. LOGIKA BUAT JADWAL & CALLBACK LAMA
+# 6. LOGIKA BUAT JADWAL & CALLBACK
 # ==========================================
 def create_calendar_event(event_data):
     event = {
@@ -224,11 +230,16 @@ def proses_judul(message, bot_msg_id):
         InlineKeyboardButton("🤖 Biarkan JARVIS Atur (Otomatis + Alasan)", callback_data="mode_auto"),
         InlineKeyboardButton("✍️ Saya Mau Ketik Waktu Sendiri", callback_data="mode_manual")
     )
-    bot.edit_message_text(
-        chat_id=chat_id, message_id=bot_msg_id,
-        text=f"📌 **Aktivitas:** {message.text}\n\nBagaimana kamu ingin menentukan alokasi waktu untuk jadwal ini?",
-        reply_markup=markup, parse_mode="Markdown"
-    )
+    
+    # Jika dipanggil tanpa merujuk bot_msg_id (seperti dari tombol jadwalkan hasil diskusi)
+    if bot_msg_id == message.message_id: 
+        bot.send_message(chat_id, f"📌 **Aktivitas:** {message.text}\n\nBagaimana kamu ingin menentukan alokasi waktu untuk jadwal ini?", reply_markup=markup, parse_mode="Markdown")
+    else:
+        bot.edit_message_text(
+            chat_id=chat_id, message_id=bot_msg_id,
+            text=f"📌 **Aktivitas:** {message.text}\n\nBagaimana kamu ingin menentukan alokasi waktu untuk jadwal ini?",
+            reply_markup=markup, parse_mode="Markdown"
+        )
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
@@ -236,17 +247,37 @@ def handle_callback(call):
     data = call.data
     bot_msg_id = call.message.message_id
 
+    # --- HANDLER KEMBALI KE MENU UTAMA ---
+    if data == "kembali_menu":
+        bot.answer_callback_query(call.id)
+        try: bot.delete_message(chat_id, bot_msg_id) 
+        except: pass
+        send_welcome(call.message) 
+        return
+
+    # --- HANDLER TRANSISI DISKUSI KE KALENDER ---
+    if data == "jadwalkan_diskusi":
+        bot.answer_callback_query(call.id)
+        msg = bot.send_message(
+            chat_id, 
+            "🤖 **Transisi Kalender Aktif.**\n\nKetik **ide/judul aktivitas** berdasarkan diskusi kita tadi untuk diolah menjadi jadwal:", 
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, lambda m: proses_judul(m, msg.message_id))
+        return
+
     # --- HANDLER HAPUS JADWAL ---
     if data.startswith("del_"):
         idx_event = data.split("_")[1]
+        markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
         if chat_id in temp_delete_events and idx_event in temp_delete_events[chat_id]:
             real_event_id = temp_delete_events[chat_id][idx_event]
             bot.answer_callback_query(call.id, "Menghapus jadwal...")
             try:
                 calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=real_event_id).execute()
-                bot.edit_message_text("✅ **Jadwal telah dihanguskan dari Google Calendar.**", chat_id=chat_id, message_id=bot_msg_id, parse_mode="Markdown")
+                bot.edit_message_text("✅ **Jadwal telah dihanguskan dari Google Calendar.**", chat_id=chat_id, message_id=bot_msg_id, reply_markup=markup_kembali, parse_mode="Markdown")
             except Exception as e:
-                bot.edit_message_text(f"❌ Gagal menghapus: {e}", chat_id=chat_id, message_id=bot_msg_id)
+                bot.edit_message_text(f"❌ Gagal menghapus: {e}", chat_id=chat_id, message_id=bot_msg_id, reply_markup=markup_kembali)
         else:
             bot.answer_callback_query(call.id, "⚠️ Sesi kedaluwarsa.")
         return
@@ -283,8 +314,8 @@ def handle_callback(call):
             completion = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt_ai}],
                 model="llama-3.3-70b-versatile",
-                temperature=0.2, # Suhu rendah agar JSON lebih akurat
-                response_format={"type": "json_object"} # Memaksa Groq mengeluarkan format JSON
+                temperature=0.2,
+                response_format={"type": "json_object"}
             )
             raw_json = completion.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
             ai_data = json.loads(raw_json)
@@ -301,7 +332,8 @@ def handle_callback(call):
             pending_events[chat_id] = event_data
             tampilkan_konfirmasi(chat_id, bot_msg_id, event_data)
         except Exception as e:
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal kalkulasi waktu otomatis: {str(e)}")
+            markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
+            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal kalkulasi waktu otomatis: {str(e)}", reply_markup=markup_kembali)
 
     elif data == "mode_manual":
         bot.answer_callback_query(call.id)
@@ -314,18 +346,20 @@ def handle_callback(call):
 
     # --- HANDLER EKSEKUSI KALENDER ---
     elif data == "confirm_yes":
+        markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
         if chat_id in pending_events:
             bot.answer_callback_query(call.id, "Menyimpan ke kalender...")
             bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengirim data ke Google Calendar API...*")
             event_data = pending_events[chat_id]
             event_link = create_calendar_event(event_data)
             
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✨ **JARVIS Core:** Tugas berhasil dialokasikan ke Google Calendar.\n🔗 [Buka Kalender]({event_link})", parse_mode="Markdown")
+            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✨ **JARVIS Core:** Tugas berhasil dialokasikan ke Google Calendar.\n🔗 [Buka Kalender]({event_link})", reply_markup=markup_kembali, parse_mode="Markdown")
             del pending_events[chat_id]
         else:
             bot.answer_callback_query(call.id, "⚠️ Sesi kedaluwarsa.")
             
     elif data == "confirm_help":
+        markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
         if chat_id in pending_events:
             bot.answer_callback_query(call.id, "Memproses skenario bantuan...")
             event_data = pending_events.pop(chat_id) 
@@ -352,13 +386,14 @@ def handle_callback(call):
             else:
                 hasil_bantuan = "Skenario dieksekusi, namun tidak ada instruksi tambahan dari sistem."
 
-            bot.send_message(chat_id, f"💡 **Hasil Eksekusi Otomatis:**\n\n{hasil_bantuan}", parse_mode="Markdown")
+            bot.send_message(chat_id, f"💡 **Hasil Eksekusi Otomatis:**\n\n{hasil_bantuan}", reply_markup=markup_kembali, parse_mode="Markdown")
         else:
             bot.answer_callback_query(call.id, "⚠️ Sesi kedaluwarsa.")
 
     elif data == "confirm_no":
+        markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
         if chat_id in pending_events: del pending_events[chat_id]
-        bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="❌ **Perintah dibatalkan oleh pengguna.**", parse_mode="Markdown")
+        bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="❌ **Perintah dibatalkan oleh pengguna.**", reply_markup=markup_kembali, parse_mode="Markdown")
 
 def proses_waktu_manual(message, bot_msg_id):
     chat_id = message.chat.id
@@ -415,7 +450,8 @@ def proses_waktu_manual(message, bot_msg_id):
         tampilkan_konfirmasi(chat_id, bot_msg_id, event_data)
         
     except Exception as e:
-        bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal memproses waktu manual: {str(e)}")
+        markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
+        bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal memproses waktu manual: {str(e)}", reply_markup=markup_kembali)
 
 # ==========================================
 # EKSEKUSI UTAMA (RENDER BULLETPROOF MODE)
