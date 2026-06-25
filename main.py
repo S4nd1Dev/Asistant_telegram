@@ -168,7 +168,7 @@ def proses_tanya_jarvis(message):
                     "content": message.text
                 }
             ],
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             temperature=0.7,
         )
         bot.reply_to(message, completion.choices[0].message.content, parse_mode="Markdown")
@@ -282,7 +282,7 @@ def handle_callback(call):
             
             completion = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt_ai}],
-                model="llama3-70b-8192",
+                model="llama-3.3-70b-versatile",
                 temperature=0.2, # Suhu rendah agar JSON lebih akurat
                 response_format={"type": "json_object"} # Memaksa Groq mengeluarkan format JSON
             )
@@ -343,7 +343,7 @@ def handle_callback(call):
                             {"role": "system", "content": "Kamu adalah JARVIS, asisten AI spesialis teknis."},
                             {"role": "user", "content": prompt_rahasia}
                         ],
-                        model="llama3-70b-8192",
+                        model="llama-3.3-70b-versatile",
                         temperature=0.7
                     )
                     hasil_bantuan = completion.choices[0].message.content
@@ -395,7 +395,7 @@ def proses_waktu_manual(message, bot_msg_id):
         
         completion = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt_ai}],
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             temperature=0.2,
             response_format={"type": "json_object"}
         )
