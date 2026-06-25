@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from google import genai
+from groq import Groq
 from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -15,11 +15,11 @@ from keep_alive import app
 # ==========================================
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 CALENDAR_ID = os.getenv("CALENDAR_ID")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") # Memuat token Groq
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-client = genai.Client(api_key=GEMINI_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY) # Inisialisasi Klien Groq
 
 # ==========================================
 # 2. SETUP GOOGLE CALENDAR
@@ -59,7 +59,7 @@ def send_welcome(message):
     pesan = (
         "🤖 **MINI JARVIS v3.0 - Command Center** ⚡\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Sistem utama *online*. Modul AI dan kalender tersinkronisasi.\n\n"
+        "Sistem utama *online*. Modul AI Groq dan kalender tersinkronisasi.\n\n"
         "Gunakan panel menu di bawah layar untuk navigasi cepat."
     )
     bot.send_message(message.chat.id, pesan, reply_markup=menu_keyboard_permanen(), parse_mode="Markdown")
@@ -157,16 +157,21 @@ def proses_tanya_jarvis(message):
     
     bot.send_chat_action(chat_id, 'typing')
     try:
-        prompt_system = (
-            "Konteks: Kamu adalah Mini JARVIS, AI Assistant untuk seorang AI Engineer MBKM & Mahasiswa Informatika. "
-            "Jawablah dengan ringkas, teknis, dan *straight to the point*. "
-            f"Pertanyaan User: {message.text}"
+        completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Konteks: Kamu adalah Mini JARVIS, AI Assistant untuk seorang AI Engineer MBKM & Mahasiswa Informatika. Jawablah dengan ringkas, teknis, dan *straight to the point*."
+                },
+                {
+                    "role": "user",
+                    "content": message.text
+                }
+            ],
+            model="llama3-70b-8192",
+            temperature=0.7,
         )
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt_system
-        )
-        bot.reply_to(message, response.text, parse_mode="Markdown")
+        bot.reply_to(message, completion.choices[0].message.content, parse_mode="Markdown")
     except Exception as e:
         bot.reply_to(message, f"❌ Gagal memproses AI: {e}")
 
@@ -274,8 +279,14 @@ def handle_callback(call):
                 "prompt_bantuan": "Instruksi rahasia buat dirimu sendiri jika user menerima bantuan. Kosongkan jika tidak ada."
             }}
             """
-            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_ai)
-            raw_json = response.text.strip().replace("```json", "").replace("```", "").strip()
+            
+            completion = groq_client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt_ai}],
+                model="llama3-70b-8192",
+                temperature=0.2, # Suhu rendah agar JSON lebih akurat
+                response_format={"type": "json_object"} # Memaksa Groq mengeluarkan format JSON
+            )
+            raw_json = completion.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
             ai_data = json.loads(raw_json)
             
             event_data = {
@@ -327,8 +338,15 @@ def handle_callback(call):
             
             if prompt_rahasia:
                 try:
-                    bantuan_response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_rahasia)
-                    hasil_bantuan = bantuan_response.text
+                    completion = groq_client.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": "Kamu adalah JARVIS, asisten AI spesialis teknis."},
+                            {"role": "user", "content": prompt_rahasia}
+                        ],
+                        model="llama3-70b-8192",
+                        temperature=0.7
+                    )
+                    hasil_bantuan = completion.choices[0].message.content
                 except Exception as e:
                     hasil_bantuan = f"Gagal mengeksekusi AI: {str(e)}"
             else:
@@ -374,8 +392,14 @@ def proses_waktu_manual(message, bot_msg_id):
             "prompt_bantuan": ""
         }}
         """
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_ai)
-        raw_json = response.text.strip().replace("```json", "").replace("```", "").strip()
+        
+        completion = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt_ai}],
+            model="llama3-70b-8192",
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        raw_json = completion.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
         ai_data = json.loads(raw_json)
         
         event_data = {
@@ -411,4 +435,4 @@ bot_thread.start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌍 Membuka Web Service di Port {port} (Main Thread)...", flush=True)
-    app.run(host="0.0.0.0", port=port, use_reloader=False)     
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
