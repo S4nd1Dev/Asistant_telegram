@@ -15,10 +15,15 @@ from bot.core import bot, groq_client
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome(message):
     pesan = (
-        "🤖 **Sandi Assistan - Clean Arch Edition** ⚡\n"
+        "🤖 **Selamat Datang di Sandi Assistan v3.1** ⚡\n\n"
+        "Saya adalah Asisten AI Cerdas yang dirancang khusus untuk membantumu mengatur jadwal, memikirkan ide, dan menjaga produktivitasmu tetap maksimal.\n\n"
+        "📖 **PANDUAN PENGGUNAAN CEPAT:**\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Sistem utama *online*. Modul AI Groq dan kalender tersinkronisasi.\n\n"
-        "Gunakan panel menu di bawah layar untuk navigasi cepat."
+        "1️⃣ **🗓️ Buat Jadwal:** Ketik ide acaramu, dan biarkan otak AI saya memikirkan alokasi waktu terbaik untukmu (atau kamu bisa tentukan sendiri).\n"
+        "2️⃣ **📋 Agenda Hari Ini:** Tarik jadwalmu langsung dari Google Calendar agar kamu tahu apa fokusmu hari ini.\n"
+        "3️⃣ **⚙️ Hapus Jadwal:** Batalkan agenda yang tidak jadi kamu ikuti dengan cepat.\n"
+        "4️⃣ **💬 Tanya JARVIS:** Butuh teman *brainstorming*, mencari *bug* kode, atau sekadar bertanya? Diskusikan di sini, lalu jadwalkan hasil diskusinya menjadi aksi nyata!\n\n"
+        "💡 *Tips: Gunakan panel menu di bawah layar untuk mulai memberikan perintah kepada saya.*"
     )
     bot.send_message(message.chat.id, pesan, reply_markup=menu_keyboard_permanen(), parse_mode="Markdown")
 
