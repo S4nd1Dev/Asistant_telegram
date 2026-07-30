@@ -9,18 +9,82 @@ from bot.keyboards.reply import menu_keyboard_permanen
 from google_calendar.service import calendar_service
 from bot.core import bot, groq_client
 
+# --- IMPOR DATABASE ---
+from database.db import SessionLocal
+from database.models import User
+# ----------------------
+
 # ==========================================
-# 1. HANDLER MENU BAWAH & START
+# 1. HANDLER MENU BAWAH & START (GERBANG REGISTRASI)
 # ==========================================
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome(message):
+    chat_id = message.chat.id
+    db = SessionLocal()
+    
+    # 1. Cari user di database
+    user = db.query(User).filter(User.chat_id == chat_id).first()
+    
+    # 2. Jika user belum ada sama sekali, buatkan datanya
+    if not user:
+        user = User(chat_id=chat_id)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    # 3. Cek apakah user sudah menaruh API Key Groq-nya
+    if not user.ai_api_key:
+        pesan = (
+            "👋 **Halo! Selamat Datang di Sandi Assistan v3.1** ⚡\n\n"
+            "Saya melihat kamu adalah pengguna baru. Untuk mulai menggunakan otak AI saya secara personal, "
+            "kamu perlu menautkan **API Key Groq** milikmu sendiri (gratis).\n\n"
+            "🔑 **Silakan balas pesan ini dengan menempelkan (paste) API Key Groq kamu:**\n\n"
+            "*(Ketik /batal jika ingin membatalkan)*"
+        )
+        msg = bot.send_message(chat_id, pesan, parse_mode="Markdown")
+        bot.register_next_step_handler(msg, proses_simpan_api_key)
+        db.close()
+        return
+        
+    db.close() # Tutup koneksi database jika tidak dipakai lagi
+
+    # 4. JIKA SUDAH PUNYA API KEY, TAMPILKAN BUKU PANDUAN
     pesan = (
-        "🤖 **MINI JARVIS v3.1 - Clean Arch Edition** ⚡\n"
+        "🤖 **Selamat Datang kembali di Sandi Assistan v3.1** ⚡\n\n"
+        "Saya adalah Asisten AI Cerdas yang dirancang khusus untuk membantumu mengatur jadwal, memikirkan ide, dan menjaga produktivitasmu tetap maksimal.\n\n"
+        "📖 **PANDUAN PENGGUNAAN CEPAT:**\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Sistem utama *online*. Modul AI Groq dan kalender tersinkronisasi.\n\n"
-        "Gunakan panel menu di bawah layar untuk navigasi cepat."
+        "1️⃣ **🗓️ Buat Jadwal:** Ketik ide acaramu, dan biarkan otak AI saya memikirkan alokasi waktu terbaik untukmu (atau kamu bisa tentukan sendiri).\n"
+        "2️⃣ **📋 Agenda Hari Ini:** Tarik jadwalmu langsung dari Google Calendar agar kamu tahu apa fokusmu hari ini.\n"
+        "3️⃣ **⚙️ Hapus Jadwal:** Batalkan agenda yang tidak jadi kamu ikuti dengan cepat.\n"
+        "4️⃣ **💬 Tanya JARVIS:** Butuh teman *brainstorming*, mencari *bug* kode, atau sekadar bertanya? Diskusikan di sini, lalu jadwalkan hasil diskusinya menjadi aksi nyata!\n\n"
+        "💡 *Tips: Gunakan panel menu di bawah layar untuk mulai memberikan perintah kepada saya.*"
     )
     bot.send_message(message.chat.id, pesan, reply_markup=menu_keyboard_permanen(), parse_mode="Markdown")
+
+def proses_simpan_api_key(message):
+    chat_id = message.chat.id
+    api_key = message.text.strip()
+    
+    if api_key == '/batal':
+        bot.send_message(chat_id, "❌ **Registrasi dibatalkan.** Ketik /start untuk mencoba lagi.", parse_mode="Markdown")
+        return
+        
+    # Validasi sederhana: panjang API key Groq biasanya cukup panjang (sekitar 50+ karakter)
+    if len(api_key) < 20:
+        msg = bot.send_message(chat_id, "❌ **API Key tidak valid.** Sepertinya itu bukan kunci yang benar.\n\nSilakan kirimkan ulang API Key Groq milikmu:", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, proses_simpan_api_key)
+        return
+        
+    # Buka brankas database dan simpan kuncinya
+    db = SessionLocal()
+    user = db.query(User).filter(User.chat_id == chat_id).first()
+    if user:
+        user.ai_api_key = api_key
+        db.commit()
+    db.close()
+    
+    bot.send_message(chat_id, "✅ **API Key berhasil diamankan ke dalam Database!** 🔒\n\nSekarang ketik /start sekali lagi untuk menyalakan mesin utama JARVIS.", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda message: message.text in ["🗓️ Buat Jadwal", "📋 Agenda Hari Ini", "⚙️ Hapus Jadwal", "💬 Tanya JARVIS"])
 def handle_menu_bawah(message):
