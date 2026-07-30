@@ -15,7 +15,7 @@ from bot.core import bot, groq_client
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome(message):
     pesan = (
-        "🤖 **MINI JARVIS v3.1 - Clean Arch Edition** ⚡\n"
+        "🤖 **Sandi Assistan - Clean Arch Edition** ⚡\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "Sistem utama *online*. Modul AI Groq dan kalender tersinkronisasi.\n\n"
         "Gunakan panel menu di bawah layar untuk navigasi cepat."
