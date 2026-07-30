@@ -2,17 +2,35 @@ import json
 from datetime import datetime, timedelta, timezone
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
 
 from config.settings import Config
 from utils.state import pending_events, wizard_data, temp_delete_events, chat_histories
 from bot.keyboards.reply import menu_keyboard_permanen
-from google_calendar.service import calendar_service
 from bot.core import bot, groq_client
 
 # --- IMPOR DATABASE ---
 from database.db import SessionLocal
 from database.models import User
 # ----------------------
+
+def get_user_calendar_service(chat_id):
+    """Membangun Google Calendar Service khusus untuk user tertentu berdasarkan OAuth Token di DB"""
+    db = SessionLocal()
+    user = db.query(User).filter(User.chat_id == chat_id).first()
+    db.close()
+    
+    if not user or not user.google_oauth_token:
+        return None
+        
+    try:
+        token_data = json.loads(user.google_oauth_token)
+        creds = Credentials(**token_data)
+        return build('calendar', 'v3', credentials=creds)
+    except Exception as e:
+        print(f"❌ Gagal memuat token Google untuk user {chat_id}: {e}")
+        return None
 
 # ==========================================
 # 1. HANDLER MENU BAWAH & START (GERBANG REGISTRASI)
@@ -70,13 +88,11 @@ def proses_simpan_api_key(message):
         bot.send_message(chat_id, "❌ **Registrasi dibatalkan.** Ketik /start untuk mencoba lagi.", parse_mode="Markdown")
         return
         
-    # Validasi sederhana: panjang API key Groq biasanya cukup panjang (sekitar 50+ karakter)
     if len(api_key) < 20:
         msg = bot.send_message(chat_id, "❌ **API Key tidak valid.** Sepertinya itu bukan kunci yang benar.\n\nSilakan kirimkan ulang API Key Groq milikmu:", parse_mode="Markdown")
         bot.register_next_step_handler(msg, proses_simpan_api_key)
         return
         
-    # Buka brankas database dan simpan kuncinya
     db = SessionLocal()
     user = db.query(User).filter(User.chat_id == chat_id).first()
     if user:
@@ -97,12 +113,40 @@ def handle_menu_bawah(message):
         bot.register_next_step_handler(msg, lambda m: proses_judul(m, msg.message_id))
         
     elif teks == "📋 Agenda Hari Ini":
+        # Cek apakah user sudah menghubungkan Google Calendar lewat OAuth
+        service = get_user_calendar_service(chat_id)
+        if not service:
+            auth_url = (
+                f"https://accounts.google.com/o/oauth2/auth?"
+                f"client_id={Config.GOOGLE_CLIENT_ID}&"
+                f"redirect_uri={Config.GOOGLE_REDIRECT_URI}&"
+                f"response_type=code&"
+                f"scope=https://www.googleapis.com/auth/calendar&"
+                f"access_type=offline&prompt=consent&"
+                f"state={chat_id}"
+            )
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🔗 Login dengan Google", url=auth_url))
+            bot.send_message(
+                chat_id, 
+                "🔒 **Akses Kalender Belum Ditautkan!**\n\n"
+                "Untuk menjaga privasi dan melihat agenda pribadimu, silakan hubungkan akun Google Calendar milikmu melalui tombol di bawah:",
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+            return
+
         bot.send_message(chat_id, "⏳ *Menarik data dari Google Calendar...*", parse_mode="Markdown")
-        tampilkan_agenda_hari_ini(chat_id)
+        tampilkan_agenda_hari_ini(chat_id, service)
         
     elif teks == "⚙️ Hapus Jadwal":
+        service = get_user_calendar_service(chat_id)
+        if not service:
+            bot.send_message(chat_id, "❌ Silakan hubungkan Google Calendar terlebih dahulu melalui menu **📋 Agenda Hari Ini**.", parse_mode="Markdown")
+            return
+            
         bot.send_message(chat_id, "⏳ *Memindai jadwal mendatang...*", parse_mode="Markdown")
-        tampilkan_menu_hapus(chat_id)
+        tampilkan_menu_hapus(chat_id, service)
         
     elif teks == "💬 Tanya JARVIS":
         pesan = "🧠 **Mode Diskusi Terbuka.**\n\nAda masalah teknis, *bug*, atau butuh teman *brainstorming*? Ketik pertanyaanmu di bawah:"
@@ -112,15 +156,15 @@ def handle_menu_bawah(message):
 # ==========================================
 # 2. FUNGSI LOGIKA FITUR
 # ==========================================
-def tampilkan_agenda_hari_ini(chat_id):
+def tampilkan_agenda_hari_ini(chat_id, service):
     wib = timezone(timedelta(hours=7))
     now = datetime.now(wib)
     awal_hari = now.replace(hour=0, minute=0, second=0).isoformat()
     akhir_hari = now.replace(hour=23, minute=59, second=59).isoformat()
     
     try:
-        events_result = calendar_service.events().list(
-            calendarId=Config.CALENDAR_ID, timeMin=awal_hari, timeMax=akhir_hari,
+        events_result = service.events().list(
+            calendarId='primary', timeMin=awal_hari, timeMax=akhir_hari,
             singleEvents=True, orderBy='startTime'
         ).execute()
         events = events_result.get('items', [])
@@ -139,13 +183,13 @@ def tampilkan_agenda_hari_ini(chat_id):
     except Exception as e:
         bot.send_message(chat_id, f"❌ Gagal mengambil jadwal: {e}")
 
-def tampilkan_menu_hapus(chat_id):
+def tampilkan_menu_hapus(chat_id, service):
     wib = timezone(timedelta(hours=7))
     now = datetime.now(wib).isoformat()
     
     try:
-        events_result = calendar_service.events().list(
-            calendarId=Config.CALENDAR_ID, timeMin=now, maxResults=5,
+        events_result = service.events().list(
+            calendarId='primary', timeMin=now, maxResults=5,
             singleEvents=True, orderBy='startTime'
         ).execute()
         events = events_result.get('items', [])
@@ -205,14 +249,18 @@ def proses_tanya_jarvis(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Gagal memproses AI: {e}")
 
-def create_calendar_event(jadwal):
+def create_calendar_event(chat_id, jadwal):
+    service = get_user_calendar_service(chat_id)
+    if not service:
+        raise Exception("Google Calendar belum ditautkan.")
+        
     event = {
         'summary': jadwal.get('nama_acara', 'Jadwal Baru'),
         'description': jadwal.get('deskripsi', ''),
         'start': {'dateTime': jadwal['waktu_mulai'], 'timeZone': 'Asia/Jakarta'},
         'end': {'dateTime': jadwal['waktu_selesai'], 'timeZone': 'Asia/Jakarta'},
     }
-    event_result = calendar_service.events().insert(calendarId=Config.CALENDAR_ID, body=event).execute()
+    event_result = service.events().insert(calendarId='primary', body=event).execute()
     return event_result.get('htmlLink')
 
 def tampilkan_konfirmasi(chat_id, bot_msg_id, event_data):
@@ -292,7 +340,9 @@ def handle_callback(call):
             real_event_id = temp_delete_events[chat_id][idx_event]
             bot.answer_callback_query(call.id, "Menghapus jadwal...")
             try:
-                calendar_service.events().delete(calendarId=Config.CALENDAR_ID, eventId=real_event_id).execute()
+                service = get_user_calendar_service(chat_id)
+                if not service: raise Exception("Autentikasi kalender terputus.")
+                service.events().delete(calendarId='primary', eventId=real_event_id).execute()
                 bot.edit_message_text("✅ **Jadwal telah dihapus.**", chat_id=chat_id, message_id=bot_msg_id, reply_markup=markup_kembali, parse_mode="Markdown")
             except Exception as e:
                 bot.edit_message_text(f"❌ Gagal menghapus: {e}", chat_id=chat_id, message_id=bot_msg_id, reply_markup=markup_kembali)
@@ -354,12 +404,15 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "Menyimpan ke kalender...")
             bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengirim data ke Google Calendar...*", parse_mode="Markdown")
             
-            event_data = pending_events[chat_id]
-            links = [f"[{j['nama_acara']}]({create_calendar_event(j)})" for j in event_data.get('daftar_jadwal', [])]
-            teks_link = "\n".join(f"🔗 {l}" for l in links)
-            
-            bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✨ **JARVIS Core:** Semua tugas berhasil dialokasikan!\n\n{teks_link}", reply_markup=markup_kembali, parse_mode="Markdown", disable_web_page_preview=True)
-            del pending_events[chat_id]
+            try:
+                event_data = pending_events[chat_id]
+                links = [f"[{j['nama_acara']}]({create_calendar_event(chat_id, j)})" for j in event_data.get('daftar_jadwal', [])]
+                teks_link = "\n".join(f"🔗 {l}" for l in links)
+                
+                bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✨ **JARVIS Core:** Semua tugas berhasil dialokasikan!\n\n{teks_link}", reply_markup=markup_kembali, parse_mode="Markdown", disable_web_page_preview=True)
+                del pending_events[chat_id]
+            except Exception as e:
+                bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"❌ Gagal menyimpan ke kalender: {e}", reply_markup=markup_kembali)
 
     elif data == "confirm_help":
         markup_kembali = InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Kembali ke Menu Utama", callback_data="kembali_menu"))
@@ -367,7 +420,7 @@ def handle_callback(call):
             event_data = pending_events.pop(chat_id) 
             bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text="⏳ *Mengamankan slot waktu & memproses bantuan...*", parse_mode="Markdown")
             try:
-                links = [f"[{j['nama_acara']}]({create_calendar_event(j)})" for j in event_data.get('daftar_jadwal', [])]
+                links = [f"[{j['nama_acara']}]({create_calendar_event(chat_id, j)})" for j in event_data.get('daftar_jadwal', [])]
                 teks_link = "\n".join(f"🔗 {l}" for l in links)
                 bot.edit_message_text(chat_id=chat_id, message_id=bot_msg_id, text=f"✅ **Slot diamankan!**\n{teks_link}\n\n🤖 *Menulis dokumen...*", parse_mode="Markdown", disable_web_page_preview=True)
                 
