@@ -13,11 +13,11 @@ class Config:
     # Google Credentials (Master / Service Account lama jika masih dipakai)
     GOOGLE_CREDENTIALS_ENV = os.getenv("GOOGLE_CREDENTIALS")
 
-    # --- TAMBAHAN KUNCI GOOGLE OAUTH WEB ---
+    # --- TAMBAHAN KUNCI GOOGLE OAUTH WEB (WAJIB ADA) ---
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
     GOOGLE_REDIRECT_URI = "https://asistant-telegram.onrender.com/callback"
-    # --------------------------------------
+    # ---------------------------------------------------
 
     @classmethod
     def get_google_creds_info(cls):
