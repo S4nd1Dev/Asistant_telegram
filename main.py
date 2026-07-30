@@ -7,6 +7,12 @@ from config.settings import Config
 # PERBAIKAN: Gunakan alias 'jarvis_bot' agar tidak bentrok dengan nama folder 'bot'
 from bot.core import bot as jarvis_bot 
 
+# --- PENAMBAHAN KODE DATABASE ---
+from database.db import engine, Base
+import database.models  # Membaca cetak biru
+Base.metadata.create_all(bind=engine) # Mengeksekusi pembuatan jarvis.db
+# --------------------------------
+
 try:
     print("🚀 [1/3] Memulai inisialisasi...", flush=True)
     
